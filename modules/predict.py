@@ -1,10 +1,11 @@
 import numpy as np
+from bokbokbok.utils import clip_sigmoid
 
 from . import config as cfg
 
 
 def predict_probability(models, test, drop_cols: list = None):
-    """予測値の算出（lgb.train モデル用）"""
+    """予測値の算出"""
 
     if drop_cols is None:
         drop_cols = []
@@ -22,3 +23,9 @@ def predict_class(pred_prob, threshold: float = .5):
     pred_class = np.where(pred_prob > threshold, 1, 0)
 
     return pred_class
+
+
+def predict_class_sigmoid(pred_prob):
+    """予測値のクラス化(シグモイド関数)"""
+
+    return clip_sigmoid(pred_prob)

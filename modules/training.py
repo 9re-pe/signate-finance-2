@@ -4,6 +4,9 @@ import lightgbm as lgb
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from bokbokbok.loss_functions.classification import WeightedCrossEntropyLoss
+from bokbokbok.eval_metrics.classification import WeightedCrossEntropyMetric
+from bokbokbok.utils import clip_sigmoid
 
 from . import config as cfg
 from .utils import Timer
@@ -81,7 +84,6 @@ def fit_lgbm_fl(train, drop_cols: list = None, lgb_params: dict = None, alpha: f
     index_col = "idx"
     train_with_index = train.with_row_count(index_col)
 
-    # TODO: チューニング
     focal_loss = lambda x, y: losses.focal_loss_lgb(x, y, alpha, gamma)
     eval_error = lambda x, y: losses.focal_loss_lgb_eval_error(x, y, alpha, gamma)
     for fold in range(cfg.Params.fold_num):
@@ -107,6 +109,61 @@ def fit_lgbm_fl(train, drop_cols: list = None, lgb_params: dict = None, alpha: f
                 valid_sets=[lgb_train, lgb_valid],
                 fobj=focal_loss,
                 feval=eval_error,
+                callbacks=[
+                    lgb.early_stopping(stopping_rounds=100),
+                    lgb.log_evaluation(100)
+                ]
+            )
+
+        # predict out-of-fold
+        oof[idx_valid] = lgb_model.predict(x_valid, num_iteration=lgb_model.best_iteration)
+        models.append(lgb_model)
+
+    print("=" * 80)
+    print("FINISH!")
+
+    return oof, models
+
+
+def fit_lgbm_wcel(train, drop_cols: list = None, lgb_params: dict = None, alpha: float = 0.25):
+
+    # 引数例外処理
+    if drop_cols is None:
+        drop_cols = []
+    if lgb_params is None:
+        lgb_params = {}
+
+    models = []
+    n_records = len(train)
+    oof = np.zeros((n_records,), dtype=np.float32)
+
+    # polarsはインデックスの概念がないのでカラムとして付与
+    index_col = "idx"
+    train_with_index = train.with_row_count(index_col)
+
+    for fold in range(cfg.Params.fold_num):
+        print(f"{'-' * 80}")
+        print(f"START fold {fold + 1}")
+
+        # split data
+        x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target, index_col] + drop_cols)
+        y_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.target].to_numpy()
+        x_valid = train.filter(pl.col(cfg.Cols.fold) == fold).drop([cfg.Cols.fold, cfg.Cols.target, index_col] + drop_cols)
+        y_valid = train.filter(pl.col(cfg.Cols.fold) == fold)[cfg.Cols.target].to_numpy()
+        idx_valid = train_with_index.filter(pl.col(cfg.Cols.fold) == fold)[index_col].to_numpy()
+
+        # Convert data to lightgbm.Dataset
+        lgb_train = lgb.Dataset(x_train, y_train)
+        lgb_valid = lgb.Dataset(x_valid, y_valid, reference=lgb_train)
+
+        # fitting
+        with Timer(prefix=f"Time: "):
+            lgb_model = lgb.train(
+                lgb_params,
+                lgb_train,
+                valid_sets=[lgb_train, lgb_valid],
+                fobj=WeightedCrossEntropyLoss(alpha=alpha),
+                feval=WeightedCrossEntropyMetric(alpha=alpha),
                 callbacks=[
                     lgb.early_stopping(stopping_rounds=100),
                     lgb.log_evaluation(100)
