@@ -25,3 +25,4 @@ class Cols:
     fold = "fold"
     sub_idx = "idx"
     sub_pred = "pred_class"
+    weight = "loss_weight"

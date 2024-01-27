@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score
 from bokbokbok.loss_functions.classification import WeightedCrossEntropyLoss, WeightedFocalLoss
 from bokbokbok.eval_metrics.classification import WeightedCrossEntropyMetric, WeightedFocalMetric
 from bokbokbok.utils import clip_sigmoid
@@ -22,6 +23,8 @@ def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
     if lgb_params is None:
         lgb_params = {}
 
+    is_weight = cfg.Cols.weight in train.columns
+
     models = []
     n_records = len(train)
     oof = np.zeros((n_records,), dtype=np.float32)
@@ -34,6 +37,11 @@ def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
         print(f"{'-' * 80}")
         print(f"START fold {fold + 1}")
 
+        if is_weight:
+            weight_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.weight].to_numpy()
+            weight_valid = train.filter(pl.col(cfg.Cols.fold) == fold)[cfg.Cols.weight].to_numpy()
+            drop_cols.append(cfg.Cols.weight)
+
         # split data
         x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
         y_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.target].to_numpy()
@@ -42,14 +50,19 @@ def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
         idx_valid = train_with_index.filter(pl.col(cfg.Cols.fold) == fold)[index_col].to_numpy()
 
         # Convert data to lightgbm.Dataset
-        lgb_train = lgb.Dataset(x_train, y_train)
-        lgb_valid = lgb.Dataset(x_valid, y_valid, reference=lgb_train)
+        if is_weight:
+            lgb_train = lgb.Dataset(x_train, y_train, weight=weight_train)
+            lgb_valid = lgb.Dataset(x_valid, y_valid, weight=weight_valid, reference=lgb_train)
+        else:
+            lgb_train = lgb.Dataset(x_train, y_train)
+            lgb_valid = lgb.Dataset(x_valid, y_valid, reference=lgb_train)
 
         # fitting
         with Timer(prefix=f"Time: "):
             lgb_model = lgb.train(
                 lgb_params,
                 lgb_train,
+                feval=lgb_macro_f1_score,
                 valid_sets=[lgb_train, lgb_valid],
                 callbacks=[
                     lgb.early_stopping(stopping_rounds=100),
@@ -184,6 +197,9 @@ def show_feature_importance(models, train, drop_cols=None):
     if drop_cols is None:
         drop_cols = []
 
+    if cfg.Cols.weight in train.columns:
+        drop_cols.append(cfg.Cols.weight)
+
     # pandasに変換
     feat_train_df = train.to_pandas().drop([cfg.Cols.target, cfg.Cols.fold] + drop_cols, axis=1)
     feature_importance_df = pd.DataFrame()
@@ -259,3 +275,11 @@ def fit_stacking(train, oof_li, lr_params: dict = None):
     print("FINISH!")
 
     return oof, models
+
+
+def lgb_macro_f1_score(y_hat, data):
+    """lightGBM の metric として macro F1 score を返す"""
+
+    y_true = data.get_label()
+    y_hat = np.round(y_hat)
+    return 'macro_f1', f1_score(y_true, y_hat, average='macro'), True

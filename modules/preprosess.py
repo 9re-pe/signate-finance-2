@@ -175,3 +175,18 @@ def label_encoding(train_df, test_df, cols):
         test_df = test_df.with_columns([pl.Series(test_label_col).alias(col_name)])
 
     return train_df, test_df
+
+
+def add_loss_weight(train_df, weight: list = None):
+    """LightGBM学習時の重み付け"""
+
+    if weight is None:
+        weight = [0.8, 0.2]
+
+    train_df = train_df.with_columns(
+        pl.when(train_df[cfg.Cols.target] == 0).then(weight[0])
+        .when(train_df[cfg.Cols.target] == 1).then(weight[1])
+        .otherwise(weight[1]).alias(cfg.Cols.weight)
+    )
+
+    return train_df
