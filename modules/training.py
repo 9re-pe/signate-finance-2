@@ -4,13 +4,13 @@ import lightgbm as lgb
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.linear_model import LogisticRegression
 from bokbokbok.loss_functions.classification import WeightedCrossEntropyLoss, WeightedFocalLoss
 from bokbokbok.eval_metrics.classification import WeightedCrossEntropyMetric, WeightedFocalMetric
 from bokbokbok.utils import clip_sigmoid
 
 from . import config as cfg
 from .utils import Timer
-from . import losses
 
 
 def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
@@ -20,7 +20,7 @@ def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
     if drop_cols is None:
         drop_cols = []
     if lgb_params is None:
-        params = {}
+        lgb_params = {}
 
     models = []
     n_records = len(train)
@@ -35,9 +35,9 @@ def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
         print(f"START fold {fold + 1}")
 
         # split data
-        x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target, index_col] + drop_cols)
+        x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
         y_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.target].to_numpy()
-        x_valid = train.filter(pl.col(cfg.Cols.fold) == fold).drop([cfg.Cols.fold, cfg.Cols.target, index_col] + drop_cols)
+        x_valid = train.filter(pl.col(cfg.Cols.fold) == fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
         y_valid = train.filter(pl.col(cfg.Cols.fold) == fold)[cfg.Cols.target].to_numpy()
         idx_valid = train_with_index.filter(pl.col(cfg.Cols.fold) == fold)[index_col].to_numpy()
 
@@ -89,9 +89,9 @@ def fit_lgbm_fl(train, drop_cols: list = None, lgb_params: dict = None, alpha: f
         print(f"START fold {fold + 1}")
 
         # split data
-        x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target, index_col] + drop_cols)
+        x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
         y_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.target].to_numpy()
-        x_valid = train.filter(pl.col(cfg.Cols.fold) == fold).drop([cfg.Cols.fold, cfg.Cols.target, index_col] + drop_cols)
+        x_valid = train.filter(pl.col(cfg.Cols.fold) == fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
         y_valid = train.filter(pl.col(cfg.Cols.fold) == fold)[cfg.Cols.target].to_numpy()
         idx_valid = train_with_index.filter(pl.col(cfg.Cols.fold) == fold)[index_col].to_numpy()
 
@@ -144,9 +144,9 @@ def fit_lgbm_wcel(train, drop_cols: list = None, lgb_params: dict = None, alpha:
         print(f"START fold {fold + 1}")
 
         # split data
-        x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target, index_col] + drop_cols)
+        x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
         y_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.target].to_numpy()
-        x_valid = train.filter(pl.col(cfg.Cols.fold) == fold).drop([cfg.Cols.fold, cfg.Cols.target, index_col] + drop_cols)
+        x_valid = train.filter(pl.col(cfg.Cols.fold) == fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
         y_valid = train.filter(pl.col(cfg.Cols.fold) == fold)[cfg.Cols.target].to_numpy()
         idx_valid = train_with_index.filter(pl.col(cfg.Cols.fold) == fold)[index_col].to_numpy()
 
@@ -214,3 +214,48 @@ def show_feature_importance(models, train, drop_cols=None):
     fig.tight_layout()
 
     return fig, ax
+
+
+def fit_stacking(train, oof_li, lr_params: dict = None):
+    """スタッキング用のモデルを学習する"""
+
+    # 引数例外処理
+    if lr_params is None:
+        lr_params = {}
+
+    models = []
+    n_records = len(train)
+    oof = np.zeros((n_records,), dtype=np.float32)
+
+    # スタッキング用の特徴量を作成（各モデルの予測値を結合）
+    stacked_features = np.column_stack(oof_li)
+
+    # polarsはインデックスの概念がないのでカラムとして付与
+    index_col = "idx"
+    train_with_index = train.with_row_count(index_col)
+
+    for fold in range(cfg.Params.fold_num):
+        print(f"{'-' * 80}")
+        print(f"START fold {fold + 1}")
+
+        # split data for stacking
+        idx_train = train_with_index.filter(pl.col(cfg.Cols.fold) != fold)[index_col].to_numpy()
+        idx_valid = train_with_index.filter(pl.col(cfg.Cols.fold) == fold)[index_col].to_numpy()
+        x_train = stacked_features[idx_train]
+        y_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.target].to_numpy()
+        x_valid = stacked_features[idx_valid]
+        y_valid = train.filter(pl.col(cfg.Cols.fold) == fold)[cfg.Cols.target].to_numpy()
+
+        # fitting logistic regression for stacking
+        with Timer(prefix=f"Time: "):
+            lr_model = LogisticRegression(**lr_params)
+            lr_model.fit(x_train, y_train)
+
+        # predict out-of-fold
+        oof[idx_valid] = lr_model.predict_proba(x_valid)[:, 1]
+        models.append(lr_model)
+
+    print("=" * 80)
+    print("FINISH!")
+
+    return oof, models

@@ -32,6 +32,16 @@ def predict_probability_sigmoid(models, test, drop_cols: list = None):
     return pred_prob
 
 
+def predict_probability_stacking(models, meta_test):
+    """スタッキングにおける予測値の算出"""
+
+    X_test = np.column_stack(meta_test)
+    pred_prob = np.array([model.predict_proba(X_test)[:, 1] for model in models])
+    pred_prob = np.mean(pred_prob, axis=0)
+
+    return pred_prob
+
+
 def predict_class(pred_prob, threshold: float = .5):
     """予測値のクラス化"""
 
