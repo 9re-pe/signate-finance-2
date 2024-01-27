@@ -4,8 +4,8 @@ import lightgbm as lgb
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from bokbokbok.loss_functions.classification import WeightedCrossEntropyLoss
-from bokbokbok.eval_metrics.classification import WeightedCrossEntropyMetric
+from bokbokbok.loss_functions.classification import WeightedCrossEntropyLoss, WeightedFocalLoss
+from bokbokbok.eval_metrics.classification import WeightedCrossEntropyMetric, WeightedFocalMetric
 from bokbokbok.utils import clip_sigmoid
 
 from . import config as cfg
@@ -13,13 +13,13 @@ from .utils import Timer
 from . import losses
 
 
-def fit_lgbm(train, drop_cols: list = None, params: dict = None):
+def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
     """LightGBM + CVによる学習を行う"""
 
     # 引数例外処理
     if drop_cols is None:
         drop_cols = []
-    if params is None:
+    if lgb_params is None:
         params = {}
 
     models = []
@@ -48,7 +48,7 @@ def fit_lgbm(train, drop_cols: list = None, params: dict = None):
         # fitting
         with Timer(prefix=f"Time: "):
             lgb_model = lgb.train(
-                params,
+                lgb_params,
                 lgb_train,
                 valid_sets=[lgb_train, lgb_valid],
                 callbacks=[
@@ -84,8 +84,6 @@ def fit_lgbm_fl(train, drop_cols: list = None, lgb_params: dict = None, alpha: f
     index_col = "idx"
     train_with_index = train.with_row_count(index_col)
 
-    focal_loss = lambda x, y: losses.focal_loss_lgb(x, y, alpha, gamma)
-    eval_error = lambda x, y: losses.focal_loss_lgb_eval_error(x, y, alpha, gamma)
     for fold in range(cfg.Params.fold_num):
         print(f"{'-' * 80}")
         print(f"START fold {fold + 1}")
@@ -107,8 +105,8 @@ def fit_lgbm_fl(train, drop_cols: list = None, lgb_params: dict = None, alpha: f
                 lgb_params,
                 lgb_train,
                 valid_sets=[lgb_train, lgb_valid],
-                fobj=focal_loss,
-                feval=eval_error,
+                fobj=WeightedFocalLoss(alpha=alpha, gamma=gamma),
+                feval=WeightedFocalMetric(alpha=alpha, gamma=gamma),
                 callbacks=[
                     lgb.early_stopping(stopping_rounds=100),
                     lgb.log_evaluation(100)
@@ -116,7 +114,7 @@ def fit_lgbm_fl(train, drop_cols: list = None, lgb_params: dict = None, alpha: f
             )
 
         # predict out-of-fold
-        oof[idx_valid] = lgb_model.predict(x_valid, num_iteration=lgb_model.best_iteration)
+        oof[idx_valid] = clip_sigmoid(lgb_model.predict(x_valid, num_iteration=lgb_model.best_iteration))
         models.append(lgb_model)
 
     print("=" * 80)
@@ -171,7 +169,7 @@ def fit_lgbm_wcel(train, drop_cols: list = None, lgb_params: dict = None, alpha:
             )
 
         # predict out-of-fold
-        oof[idx_valid] = lgb_model.predict(x_valid, num_iteration=lgb_model.best_iteration)
+        oof[idx_valid] = clip_sigmoid(lgb_model.predict(x_valid, num_iteration=lgb_model.best_iteration))
         models.append(lgb_model)
 
     print("=" * 80)

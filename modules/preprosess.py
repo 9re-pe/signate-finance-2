@@ -23,11 +23,20 @@ def assign_stratified_k_fold(train_df, objective_col, ):
     return train_df
 
 
-def convert_city_to_latlon(df):
-    """Cityカラムから緯度経度に変換"""
+def convert_to_latlon(df):
+    """地名から緯度経度に変換"""
 
-    latlon_df = pl.read_csv(cfg.DirFile.latlon)
-    df = df.join(latlon_df, on="City", how="left")
+    # State
+    latlon_df = pl.read_csv(cfg.DirFile.state_latlon)
+    df = df.join(latlon_df, on="State", how="left").rename({"lat": "State_lat", "lon": "State_lon"})
+
+    # BankState
+    latlon_df = pl.read_csv(cfg.DirFile.state_latlon).rename({"State": "BankState"})
+    df = df.join(latlon_df, on="BankState", how="left").rename({"lat": "BankState_lat", "lon": "BankState_lon"})
+
+    # City
+    latlon_df = pl.read_csv(cfg.DirFile.city_latlon).drop_nulls()
+    df = df.join(latlon_df, on="City", how="left").rename({"lat": "City_lat", "lon": "City_lon"})
 
     return df
 

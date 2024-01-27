@@ -7,7 +7,9 @@ class DirFile:
     submit = data + "sample_submission.csv"
 
     external = root + "input/external/"
-    latlon = external + "unique_addresses.csv"
+    state_latlon = external + "state_latlon.csv"
+    city_latlon = external + "city_latlon.csv"
+
 
     output = root + "output/"
 
