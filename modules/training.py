@@ -65,7 +65,7 @@ def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
                 feval=lgb_macro_f1_score,
                 valid_sets=[lgb_train, lgb_valid],
                 callbacks=[
-                    lgb.early_stopping(stopping_rounds=100),
+                    lgb.early_stopping(stopping_rounds=cfg.Params.stopping_rounds),
                     lgb.log_evaluation(100)
                 ]
             )
@@ -121,7 +121,7 @@ def fit_lgbm_fl(train, drop_cols: list = None, lgb_params: dict = None, alpha: f
                 fobj=WeightedFocalLoss(alpha=alpha, gamma=gamma),
                 feval=WeightedFocalMetric(alpha=alpha, gamma=gamma),
                 callbacks=[
-                    lgb.early_stopping(stopping_rounds=100),
+                    lgb.early_stopping(stopping_rounds=cfg.Params.stopping_rounds),
                     lgb.log_evaluation(100)
                 ]
             )
@@ -176,7 +176,7 @@ def fit_lgbm_wcel(train, drop_cols: list = None, lgb_params: dict = None, alpha:
                 fobj=WeightedCrossEntropyLoss(alpha=alpha),
                 feval=WeightedCrossEntropyMetric(alpha=alpha),
                 callbacks=[
-                    lgb.early_stopping(stopping_rounds=100),
+                    lgb.early_stopping(stopping_rounds=cfg.Params.stopping_rounds),
                     lgb.log_evaluation(100)
                 ]
             )

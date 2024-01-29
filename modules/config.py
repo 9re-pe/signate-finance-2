@@ -17,7 +17,8 @@ class DirFile:
 class Params:
     seed = 42
     fold_num = 5
-    learning_rate = 0.2
+    learning_rate = 0.01
+    stopping_rounds = 200
 
 
 class Cols:
