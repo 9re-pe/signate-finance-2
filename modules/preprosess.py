@@ -6,7 +6,7 @@ import polars as pl
 from . import config as cfg
 
 
-def assign_stratified_k_fold(train_df, objective_col, ):
+def assign_stratified_k_fold(train_df):
     """StratifiedKFoldによるfoldの割り当て"""
 
     skf = StratifiedKFold(
@@ -16,7 +16,7 @@ def assign_stratified_k_fold(train_df, objective_col, ):
     )
 
     fold_assignments = np.full(train_df.height, -1, dtype=int)
-    for i, (_, valid_index) in enumerate(skf.split(train_df, train_df[objective_col])):
+    for i, (_, valid_index) in enumerate(skf.split(train_df, train_df[cfg.Cols.target])):
         fold_assignments[valid_index] = i
     train_df = train_df.with_columns(pl.Series("fold", fold_assignments))
 

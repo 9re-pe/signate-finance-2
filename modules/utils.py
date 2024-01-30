@@ -36,6 +36,13 @@ def make_submission(submit, filename, cv_score):
     submit.write_csv(cfg.DirFile.output + f"submit_{filename}_{cv_score}.csv", has_header=False)
 
 
+def ignore_user_warning():
+    """LightGBM等のUserWarningを無視する"""
+
+    import warnings
+    warnings.filterwarnings('ignore', category=UserWarning)
+
+
 # ref: Kaggleコード遺産 https://qiita.com/kaggle_grandmaster-arai-san/items/d59b2fb7142ec7e270a5
 class Timer:
     def __init__(self, logger=None, format_str="{:.3f}[s]", prefix=None, suffix=None, sep=" "):
