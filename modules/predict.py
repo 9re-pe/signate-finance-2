@@ -10,8 +10,8 @@ def predict_probability(models, test, drop_cols: list = None):
     if drop_cols is None:
         drop_cols = []
 
-    test_feat_df = test.drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
-    pred_prob = np.array([model.predict(test_feat_df.to_numpy(), num_iteration=model.best_iteration) for model in models])
+    x_test = test.drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols).to_numpy()
+    pred_prob = np.array([model.predict_proba(x_test)[:, 1] for model in models])
     pred_prob = np.mean(pred_prob, axis=0)
 
     return pred_prob
@@ -23,9 +23,9 @@ def predict_probability_sigmoid(models, test, drop_cols: list = None):
     if drop_cols is None:
         drop_cols = []
 
-    test_feat_df = test.drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
+    x_test = test.drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols).to_numpy()
     pred_prob = np.array(
-        [clip_sigmoid(model.predict(test_feat_df.to_numpy(), num_iteration=model.best_iteration)) for model in models]
+        [clip_sigmoid(model.predict(x_test, num_iteration=model.best_iteration)) for model in models]
     )
     pred_prob = np.mean(pred_prob, axis=0)
 

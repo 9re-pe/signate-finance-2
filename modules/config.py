@@ -7,9 +7,8 @@ class DirFile:
     submit = data + "sample_submission.csv"
 
     external = root + "input/external/"
-    state_latlon = external + "state_latlon.csv"
-    city_latlon = external + "city_latlon.csv"
-
+    state_latlng = external + "state_latlng.csv"
+    city_latlng = external + "city_latlng.csv"
 
     output = root + "output/"
 
@@ -17,8 +16,12 @@ class DirFile:
 class Params:
     seed = 42
     fold_num = 5
-    learning_rate = 0.01
-    stopping_rounds = 200
+    lgb_learning_rate = 0.01
+    lgb_max_depth = 6
+    lgb_n_estimators = 1000
+    lgb_colsample_bytree = 0.7
+    lgb_stopping_rounds = 200
+    lgb_verbose_eval = 0
 
 
 class Cols:

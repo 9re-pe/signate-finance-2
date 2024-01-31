@@ -2,8 +2,15 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
 import polars as pl
+from geopy.distance import geodesic
 
 from . import config as cfg
+
+
+def drop_null_columns(df):
+    df = df.drop('')
+
+    return df
 
 
 def assign_stratified_k_fold(train_df):
@@ -23,20 +30,40 @@ def assign_stratified_k_fold(train_df):
     return train_df
 
 
-def convert_to_latlon(df):
+def convert_to_latlng(df):
     """地名から緯度経度に変換"""
 
     # State
-    latlon_df = pl.read_csv(cfg.DirFile.state_latlon)
-    df = df.join(latlon_df, on="State", how="left").rename({"lat": "State_lat", "lon": "State_lon"})
+    latlng_df = pl.read_csv(cfg.DirFile.state_latlng)
+    df = df.join(latlng_df, on="State", how="left").rename({"lat": "State_lat", "lng": "State_lng"})
 
     # BankState
-    latlon_df = pl.read_csv(cfg.DirFile.state_latlon).rename({"State": "BankState"})
-    df = df.join(latlon_df, on="BankState", how="left").rename({"lat": "BankState_lat", "lon": "BankState_lon"})
+    latlng_df = pl.read_csv(cfg.DirFile.state_latlng).rename({"State": "BankState"})
+    df = df.join(latlng_df, on="BankState", how="left").rename({"lat": "BankState_lat", "lng": "BankState_lng"})
 
     # City
-    latlon_df = pl.read_csv(cfg.DirFile.city_latlon).drop_nulls()
-    df = df.join(latlon_df, on="City", how="left").rename({"lat": "City_lat", "lon": "City_lon"})
+    latlng_df = pl.read_csv(cfg.DirFile.city_latlng).drop_nulls()
+    df = df.join(latlng_df, on="City", how="left").rename({"lat": "City_lat", "lng": "City_lng"})
+
+    return df
+
+
+def add_distance_between_state_and_bankstate(df):
+    """StateとBankStateの距離を追加"""
+
+    # TODO: lamdaで実装
+    df = df.with_columns(pl.col(['City_lat', 'City_lng', 'State_lat', 'State_lng', 'BankState_lat', 'BankState_lng']).fill_null(0))
+
+    state_lat_list = df.select(pl.col('State_lat')).to_pandas()["State_lat"].to_list()
+    state_lng_list = df.select(pl.col('State_lng')).to_pandas()["State_lng"].to_list()
+    bankState_lat_list = df.select(pl.col('BankState_lat')).to_pandas()["BankState_lat"].to_list()
+    bankState_lng_list = df.select(pl.col('BankState_lng')).to_pandas()["BankState_lng"].to_list()
+
+    train_distance_list = []
+    for state_lat, state_lng, bankstate_lat, bankstate_lng in zip(state_lat_list, state_lng_list, bankState_lat_list, bankState_lng_list):
+        train_distance_list.append(geodesic((state_lat, state_lng), (bankstate_lat, bankstate_lng)).kilometers)
+
+    df = df.with_columns(pl.Series("State_BankState_distance", train_distance_list))
 
     return df
 
@@ -51,6 +78,36 @@ def convert_date_to_year(df, cols):
     for col_name in cols:
         df = df.with_columns(
             pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.year().alias(f"{col_name}_year")
+        )
+
+    return df
+
+
+def convert_date_to_month(df, cols):
+    """日付データからMonthだけ抽出して数値とする
+
+    変換前 : 30-Sep-94
+    変換後 : 9
+    """
+
+    for col_name in cols:
+        df = df.with_columns(
+            pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.month().alias(f"{col_name}_month")
+        )
+
+    return df
+
+
+def convert_date_to_day(df, cols):
+    """日付データからDayだけ抽出して数値とする
+
+    変換前 : 30-Sep-94
+    変換後 : 30
+    """
+
+    for col_name in cols:
+        df = df.with_columns(
+            pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.day().alias(f"{col_name}_day")
         )
 
     return df
@@ -134,6 +191,24 @@ def add_diff_disbursement_with_approval(df):
     df = df.drop(["DisbursementDate_parsed", "ApprovalDate_parsed"])
 
     return df
+
+
+def convert_aggregation_data(train_df, test_df, agg_col, cols):
+    """ラベルデータを特定カラムに対する統計量で置き換える"""
+
+    for column_name in cols:
+        whole_df = train_df
+        whole_df_ = whole_df.group_by(column_name).agg([
+            pl.col(agg_col).mean().alias(f'{column_name}_{agg_col}_mean'),
+            pl.col(agg_col).max().alias(f'{column_name}_{agg_col}_max'),
+            pl.col(agg_col).min().alias(f'{column_name}_{agg_col}_min'),
+            pl.col(agg_col).std().alias(f'{column_name}_{agg_col}_std'),
+            pl.col(agg_col).median().alias(f'{column_name}_{agg_col}_median')
+        ])
+        train_df = train_df.join(whole_df_, on=column_name, how='left')
+        test_df = test_df.join(whole_df_, on=column_name, how='left')
+
+    return train_df, test_df
 
 
 # TODO: リークの可能性があるのでKaggle本に合わせる

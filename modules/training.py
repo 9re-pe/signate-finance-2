@@ -5,73 +5,72 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, recall_score, precision_score
 from bokbokbok.loss_functions.classification import WeightedCrossEntropyLoss, WeightedFocalLoss
 from bokbokbok.eval_metrics.classification import WeightedCrossEntropyMetric, WeightedFocalMetric
 from bokbokbok.utils import clip_sigmoid
 
 from . import config as cfg
 from .utils import Timer
+from . import preprosess
+from . import predict
+from . import metrics
 
 
-def fit_lgbm(train, drop_cols: list = None, lgb_params: dict = None):
-    """LightGBM + CVによる学習を行う"""
+def fit_lgbm(train, lgb_params: dict = None, zero_weight=0.5, drop_cols: list = None):
+    """LightGBM + Sampling weight + CVによる学習を行う"""
 
-    # 引数例外処理
-    if drop_cols is None:
-        drop_cols = []
     if lgb_params is None:
         lgb_params = {}
+    if drop_cols is None:
+        drop_cols = []
 
-    is_weight = cfg.Cols.weight in train.columns
+    # 扱いやすいようにpandasに変換
+    train = train.to_pandas()
+
+    # CVインデックス作成
+    cv = []
+    for fold in range(cfg.Params.fold_num):
+        idx_train = np.array(train[train['fold'] != fold].index.to_list())
+        idx_valid = np.array(train[train['fold'] == fold].index.to_list())
+        cv.append((idx_train, idx_valid))
+
+    # 特徴量と目的変数を抽出
+    X = train.drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols, axis=1).values
+    y = train[cfg.Cols.target].values
 
     models = []
-    n_records = len(train)
-    oof = np.zeros((n_records,), dtype=np.float32)
-
-    # polarsはインデックスの概念がないのでカラムとして付与
-    index_col = "idx"
-    train_with_index = train.with_row_count(index_col)
-
-    for fold in range(cfg.Params.fold_num):
+    oof = np.zeros((len(train),), dtype=np.float32)
+    for fold, (idx_train, idx_valid) in enumerate(cv):
         print(f"{'-' * 80}")
         print(f"START fold {fold + 1}")
 
-        if is_weight:
-            weight_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.weight].to_numpy()
-            weight_valid = train.filter(pl.col(cfg.Cols.fold) == fold)[cfg.Cols.weight].to_numpy()
-            drop_cols.append(cfg.Cols.weight)
-
         # split data
-        x_train = train.filter(pl.col(cfg.Cols.fold) != fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
-        y_train = train.filter(pl.col(cfg.Cols.fold) != fold)[cfg.Cols.target].to_numpy()
-        x_valid = train.filter(pl.col(cfg.Cols.fold) == fold).drop([cfg.Cols.fold, cfg.Cols.target] + drop_cols)
-        y_valid = train.filter(pl.col(cfg.Cols.fold) == fold)[cfg.Cols.target].to_numpy()
-        idx_valid = train_with_index.filter(pl.col(cfg.Cols.fold) == fold)[index_col].to_numpy()
+        x_train, y_train = X[idx_train], y[idx_train]
+        x_valid, y_valid = X[idx_valid], y[idx_valid]
 
-        # Convert data to lightgbm.Dataset
-        if is_weight:
-            lgb_train = lgb.Dataset(x_train, y_train, weight=weight_train)
-            lgb_valid = lgb.Dataset(x_valid, y_valid, weight=weight_valid, reference=lgb_train)
-        else:
-            lgb_train = lgb.Dataset(x_train, y_train)
-            lgb_valid = lgb.Dataset(x_valid, y_valid, reference=lgb_train)
+        # sample weight
+        train_weights = np.zeros(len(y_train))
+        train_weights[y_train == 0] = zero_weight
+        train_weights[y_train == 1] = 1.0 - zero_weight
+        valid_weights = np.ones(len(x_valid))
 
         # fitting
+        lgb_model = lgb.LGBMClassifier(**lgb_params)
         with Timer(prefix=f"Time: "):
-            lgb_model = lgb.train(
-                lgb_params,
-                lgb_train,
-                feval=lgb_macro_f1_score,
-                valid_sets=[lgb_train, lgb_valid],
-                callbacks=[
-                    lgb.early_stopping(stopping_rounds=cfg.Params.stopping_rounds),
-                    lgb.log_evaluation(100)
-                ]
-            )
+            lgb_model.fit(x_train, y_train,
+                          sample_weight=train_weights,
+                          eval_set=[(x_valid, y_valid)],
+                          eval_metric=LgbCustomMetrics.lgb_macro_f1,
+                          eval_sample_weight=[valid_weights],
+                          callbacks=[
+                              lgb.early_stopping(stopping_rounds=200, verbose=True),
+                              lgb.log_evaluation(cfg.Params.lgb_verbose_eval)
+                          ]
+                          )
 
         # predict out-of-fold
-        oof[idx_valid] = lgb_model.predict(x_valid, num_iteration=lgb_model.best_iteration)
+        oof[idx_valid] = lgb_model.predict_proba(x_valid)[:, 1]
         models.append(lgb_model)
 
     print("=" * 80)
@@ -277,9 +276,33 @@ def fit_stacking(train, oof_li, lr_params: dict = None):
     return oof, models
 
 
-def lgb_macro_f1_score(y_hat, data):
-    """lightGBM の metric として macro F1 score を返す"""
+class LgbCustomMetrics:
+    @staticmethod
+    def lgb_macro_f1(y_true, y_pred):
+        y_pred = np.round(y_pred)
+        f1 = f1_score(y_true, y_pred, average="macro")
 
-    y_true = data.get_label()
-    y_hat = np.round(y_hat)
-    return 'macro_f1', f1_score(y_true, y_hat, average='macro'), True
+        return 'macroF1', f1, True
+
+    @staticmethod
+    def lgb_weight_macro_f1(y_true, y_pred, ratio):
+        y_pred = np.round(y_pred)
+        f1 = np.mean(f1_score(y_true, y_pred, average=None) * np.array(ratio))
+
+        return 'macroF1', f1, True
+
+    @staticmethod
+    def lgb_macro_recall(y_true, y_pred):
+        y_pred_labels = y_pred.reshape(len(np.unique(y_true)), -1).argmax(axis=0)
+        ratio_list = [[0.2, 0.1, 0.7], [0.3, 0.1, 0.6], [0.4, 0.1, 0.5], [0.25, 0.15, 0.6], [1, 1, 1]]
+        recall = sum(recall_score(y_true, y_pred_labels, average=None) * np.array(ratio_list[s]))
+
+        return 'macro_recall', recall, True
+
+    @staticmethod
+    def lgb_macro_precision(y_true, y_pred):
+        y_pred_labels = y_pred.reshape(len(np.unique(y_true)), -1).argmax(axis=0)
+        ratio_list = [[0.2, 0.1, 0.7], [0.3, 0.1, 0.6], [0.4, 0.1, 0.5], [0.25, 0.15, 0.6], [1, 1, 1]]
+        precision = sum(precision_score(y_true, y_pred_labels, average=None, zero_division=0) * np.array(ratio_list[s]))
+
+        return 'macro_precision', precision, True
