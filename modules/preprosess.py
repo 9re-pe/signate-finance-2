@@ -77,7 +77,7 @@ def convert_date_to_year(df, cols):
 
     for col_name in cols:
         df = df.with_columns(
-            pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.year().alias(f"{col_name}_year")
+            pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.year().alias(f"{col_name}Year")
         )
 
     return df
@@ -92,7 +92,7 @@ def convert_date_to_month(df, cols):
 
     for col_name in cols:
         df = df.with_columns(
-            pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.month().alias(f"{col_name}_month")
+            pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.month().alias(f"{col_name}Month")
         )
 
     return df
@@ -107,7 +107,7 @@ def convert_date_to_day(df, cols):
 
     for col_name in cols:
         df = df.with_columns(
-            pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.day().alias(f"{col_name}_day")
+            pl.col(col_name).str.strptime(pl.Date, "%d-%b-%y").dt.day().alias(f"{col_name}Day")
         )
 
     return df

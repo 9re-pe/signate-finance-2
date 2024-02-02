@@ -11,6 +11,7 @@ class DirFile:
     city_latlng = external + "city_latlng.csv"
 
     output = root + "output/"
+    tmp = output + "tmp/"
 
 
 class Params:
