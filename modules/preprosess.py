@@ -148,7 +148,7 @@ def add_eq(df, eqs):
 
     for eq in eqs:
         df = df.with_columns(
-            ((pl.col(eq[0]) == pl.col(eq[1])).cast(pl.Int64)).alias(f"{eq[0]}_{eq[1]}_diff")
+            ((pl.col(eq[0]) == pl.col(eq[1])).cast(pl.Int64)).alias(f"{eq[0]}_{eq[1]}_eq")
         )
 
     return df

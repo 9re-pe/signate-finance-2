@@ -50,16 +50,23 @@ def search_effective_feature(
         ignore_features = set(ignore_features)
         features = [feature for feature in features if feature not in ignore_features]
 
-    base_cv_score, base_zero_weight = tuning_loss_weight(
-        train, lgb_params=lgb_params, zero_weights=zero_weights, drop_cols=drop_cols
-    )
-
     results_df = pl.DataFrame([
         pl.Series("feature", [], dtype=pl.Utf8),
         pl.Series("cv_score", [], dtype=pl.Float64),
         pl.Series("zero_weight", [], dtype=pl.Float64),
         pl.Series("diff", [], dtype=pl.Float64),
     ])
+
+    base_cv_score, base_zero_weight = tuning_loss_weight(
+        train, lgb_params=lgb_params, zero_weights=zero_weights, drop_cols=drop_cols
+    )
+    results_df = results_df.vstack(pl.DataFrame({
+        "feature": "base",
+        "cv_score": [base_cv_score],
+        "zero_weight": [base_zero_weight],
+        "diff": [0.0],
+    }))
+
     for feature in features:
         check_train = train.drop([feature])
         cv_score, zero_weight = tuning_loss_weight(
